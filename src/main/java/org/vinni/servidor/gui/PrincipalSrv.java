@@ -9,6 +9,9 @@ import java.io.PrintWriter;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 
 /**
  * Author: Vinni
@@ -91,17 +94,13 @@ public class PrincipalSrv extends javax.swing.JFrame {
                     InetAddress addr = InetAddress.getLocalHost();
                     serverSocket = new ServerSocket( PORT);
                     mensajesTxt.append("Servidor TCP en ejecución: "+ addr + " ,Puerto " + serverSocket.getLocalPort()+ "\n");
-                    while (true) {
-                        clientSocket = serverSocket.accept();
-                        in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-                        String linea;
-                        out = new PrintWriter(clientSocket.getOutputStream(), true);
-                        while ((linea = in.readLine()) != null) {
-                            mensajesTxt.append("Cliente: " + linea + "\n");
-                            out.println("Mensaje recibido en el server " );
-                        }
+                    ExecutorService pool = Executors.newFixedThreadPool(3);
 
+                    while (true) {
+                        Socket client = serverSocket.accept();
+                        pool.execute(() -> manejarCliente(client, pool));
                     }
+
                 } catch (IOException ex) {
                     ex.printStackTrace();
                     mensajesTxt.append("Error en el servidor: " + ex.getMessage() + "\n");
@@ -109,6 +108,35 @@ public class PrincipalSrv extends javax.swing.JFrame {
             }
         }).start();
     }
+
+    private void manejarCliente(Socket clientSocket,  ExecutorService pool) {
+        try (
+                BufferedReader in = new BufferedReader(
+                        new InputStreamReader(clientSocket.getInputStream()));
+                PrintWriter out = new PrintWriter(
+                        clientSocket.getOutputStream(), true)
+        ) {
+
+            String linea;
+
+            while ((linea = in.readLine()) != null) {
+                String finalLinea = linea;
+
+
+                SwingUtilities.invokeLater(() ->
+                        mensajesTxt.append("Cliente: " + finalLinea + "\n")
+                );
+
+                out.println("Mensaje recibido en el server");
+            }
+
+        } catch (IOException e) {
+            SwingUtilities.invokeLater(() ->
+                    mensajesTxt.append("Cliente desconectado\n")
+            );
+        }
+    }
+
 
     // Variables declaration - do not modify
     private javax.swing.JButton bIniciar;
