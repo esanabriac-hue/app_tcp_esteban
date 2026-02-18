@@ -1,10 +1,7 @@
 package org.vinni.cliente.gui;
 
 import javax.swing.*;
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
+import java.io.*;
 import java.net.Socket;
 
 /**
@@ -41,6 +38,8 @@ public class PrincipalCli extends javax.swing.JFrame {
         mensajeTxt = new javax.swing.JTextField();
         jLabel2 = new javax.swing.JLabel();
         btEnviar = new javax.swing.JButton();
+
+
 
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
         getContentPane().setLayout(null);
@@ -88,6 +87,20 @@ public class PrincipalCli extends javax.swing.JFrame {
         getContentPane().add(btEnviar);
         btEnviar.setBounds(327, 160, 120, 27);
 
+        btEnviarArchivo = new javax.swing.JButton();
+
+        btEnviarArchivo.setFont(new java.awt.Font("Verdana", 0, 14));
+        btEnviarArchivo.setText("Enviar Archivo");
+        btEnviarArchivo.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                enviarArchivoActionPerformed(evt);
+            }
+        });
+
+        getContentPane().add(btEnviarArchivo);
+        btEnviarArchivo.setBounds(40, 160, 150, 27);
+
+
         setSize(new java.awt.Dimension(491, 375));
         setLocationRelativeTo(null);
     }// </editor-fold>
@@ -99,6 +112,17 @@ public class PrincipalCli extends javax.swing.JFrame {
         this.enviarMensaje();
 
     }
+    private void enviarArchivoActionPerformed(java.awt.event.ActionEvent evt) {
+        JFileChooser fileChooser = new JFileChooser();
+        int opcion = fileChooser.showOpenDialog(this);
+
+        if (opcion == JFileChooser.APPROVE_OPTION) {
+            File archivo = fileChooser.getSelectedFile();
+            enviarArchivo(archivo);
+        }
+    }
+
+
 
 
 
@@ -122,6 +146,8 @@ public class PrincipalCli extends javax.swing.JFrame {
     private javax.swing.JScrollPane jScrollPane1;
     private javax.swing.JTextArea mensajesTxt;
     private JTextField mensajeTxt;
+    private javax.swing.JButton btEnviarArchivo;
+
     // End of variables declaration
 
     private void conectar() {
@@ -152,8 +178,29 @@ public class PrincipalCli extends javax.swing.JFrame {
     private void enviarMensaje() {
         out.println(mensajeTxt.getText());
         mensajeTxt.setText("");
-
-
-
     }
+    private void enviarArchivo(File archivo) {
+        try {
+            OutputStream os = socket.getOutputStream();
+            FileInputStream fis = new FileInputStream(archivo);
+
+            out.println("FILE:" + archivo.getName() + ":" + archivo.length());
+
+            byte[] buffer = new byte[4096];
+            int bytes;
+
+            while ((bytes = fis.read(buffer)) != -1) {
+                os.write(buffer, 0, bytes);
+            }
+
+            os.flush();
+            fis.close();
+
+            mensajesTxt.append("Archivo enviado: " + archivo.getName() + "\n");
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
 }

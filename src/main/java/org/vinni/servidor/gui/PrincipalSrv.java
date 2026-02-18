@@ -2,13 +2,12 @@ package org.vinni.servidor.gui;
 
 
 import javax.swing.*;
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
+import java.io.*;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -22,12 +21,15 @@ public class PrincipalSrv extends javax.swing.JFrame {
     private Socket clientSocket;
     private BufferedReader in;
     private PrintWriter out;
+    private static Set<PrintWriter> clientes = ConcurrentHashMap.newKeySet();
+
 
     /**
      * Creates new form Principal1
      */
     public PrincipalSrv() {
         initComponents();
+
     }
     @SuppressWarnings("unchecked")
     // <editor-fold defaultstate="collapsed" desc="Generated Code">
@@ -94,11 +96,10 @@ public class PrincipalSrv extends javax.swing.JFrame {
                     InetAddress addr = InetAddress.getLocalHost();
                     serverSocket = new ServerSocket( PORT);
                     mensajesTxt.append("Servidor TCP en ejecución: "+ addr + " ,Puerto " + serverSocket.getLocalPort()+ "\n");
-                    ExecutorService pool = Executors.newFixedThreadPool(3);
-
+                    ExecutorService pool = Executors.newCachedThreadPool();
                     while (true) {
                         Socket client = serverSocket.accept();
-                        pool.execute(() -> manejarCliente(client, pool));
+                        pool.execute(() -> manejarCliente(client));
                     }
 
                 } catch (IOException ex) {
@@ -109,23 +110,57 @@ public class PrincipalSrv extends javax.swing.JFrame {
         }).start();
     }
 
-    private void manejarCliente(Socket clientSocket,  ExecutorService pool) {
+    private void manejarCliente(Socket clientSocket) {
         try (
                 BufferedReader in = new BufferedReader(
                         new InputStreamReader(clientSocket.getInputStream()));
                 PrintWriter out = new PrintWriter(
                         clientSocket.getOutputStream(), true)
         ) {
-
+            clientes.add(out);
             String linea;
 
             while ((linea = in.readLine()) != null) {
                 String finalLinea = linea;
+                if (finalLinea.startsWith("FILE:")) {
+
+                    out.println("Mensaje recibido en el server");
+
+                    String[] partes = linea.split(":");
+                    String nombre = partes[1];
+                    long tamaño = Long.parseLong(partes[2]);
+
+                    FileOutputStream fos = new FileOutputStream("recibido_" + nombre);
+                    InputStream is = clientSocket.getInputStream();
+
+                    byte[] buffer = new byte[4096];
+                    long restantes = tamaño;
+                    int bytes;
+
+                    while (restantes > 0 &&
+                            (bytes = is.read(buffer, 0,
+                                    (int)Math.min(buffer.length, restantes))) != -1) {
+
+                        fos.write(buffer, 0, bytes);
+                        restantes -= bytes;
+                    }
+
+                    fos.close();
+
+                    System.out.println("Archivo recibido: " + nombre);
+
+                    continue;
+                }
+
 
 
                 SwingUtilities.invokeLater(() ->
                         mensajesTxt.append("Cliente: " + finalLinea + "\n")
+
                 );
+                for (PrintWriter cliente : clientes) {
+                    cliente.println(finalLinea);
+                }
 
                 out.println("Mensaje recibido en el server");
             }
