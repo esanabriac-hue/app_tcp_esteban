@@ -1,38 +1,36 @@
 package org.vinni.servidor.gui;
 
-
 import javax.swing.*;
 import java.io.*;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-
 /**
  * Author: Vinni
+ * Modificado: Mensajería privada entre clientes (USER, MSG y PRIV)
  */
 public class PrincipalSrv extends javax.swing.JFrame {
     private final int PORT = 12345;
     private ServerSocket serverSocket;
-    private Socket clientSocket;
-    private BufferedReader in;
-    private PrintWriter out;
-    private static Set<PrintWriter> clientes = ConcurrentHashMap.newKeySet();
 
+    private static final Map<String, PrintWriter> clientes = new ConcurrentHashMap<>();
 
-    /**
-     * Creates new form Principal1
-     */
+    private javax.swing.JButton bIniciar;
+    private javax.swing.JLabel jLabel1;
+    private javax.swing.JTextArea mensajesTxt;
+    private javax.swing.JScrollPane jScrollPane1;
+
     public PrincipalSrv() {
         initComponents();
-
     }
+
     @SuppressWarnings("unchecked")
-    // <editor-fold defaultstate="collapsed" desc="Generated Code">
     private void initComponents() {
         this.setTitle("Servidor ...");
 
@@ -46,11 +44,7 @@ public class PrincipalSrv extends javax.swing.JFrame {
 
         bIniciar.setFont(new java.awt.Font("Segoe UI", 0, 18)); // NOI18N
         bIniciar.setText("INICIAR SERVIDOR");
-        bIniciar.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                bIniciarActionPerformed(evt);
-            }
-        });
+        bIniciar.addActionListener(evt -> bIniciarActionPerformed(evt));
         getContentPane().add(bIniciar);
         bIniciar.setBounds(100, 90, 250, 40);
 
@@ -62,120 +56,169 @@ public class PrincipalSrv extends javax.swing.JFrame {
 
         mensajesTxt.setColumns(25);
         mensajesTxt.setRows(5);
-
         jScrollPane1.setViewportView(mensajesTxt);
-
         getContentPane().add(jScrollPane1);
         jScrollPane1.setBounds(20, 160, 410, 70);
 
         setSize(new java.awt.Dimension(491, 290));
         setLocationRelativeTo(null);
-    }// </editor-fold>
-
-    /**
-     * @param args the command line arguments
-     */
-    public static void main(String args[]) {
-        /* Create and display the form */
-        java.awt.EventQueue.invokeLater(new Runnable() {
-            public void run() {
-                new PrincipalSrv().setVisible(true);
-            }
-        });
-
     }
+
+    public static void main(String args[]) {
+        java.awt.EventQueue.invokeLater(() -> new PrincipalSrv().setVisible(true));
+    }
+
     private void bIniciarActionPerformed(java.awt.event.ActionEvent evt) {
         iniciarServidor();
     }
 
     private void iniciarServidor() {
         JOptionPane.showMessageDialog(this, "Iniciando servidor");
-        new Thread(new Runnable() {
-            public void run() {
-                try {
-                    InetAddress addr = InetAddress.getLocalHost();
-                    serverSocket = new ServerSocket( PORT);
-                    mensajesTxt.append("Servidor TCP en ejecución: "+ addr + " ,Puerto " + serverSocket.getLocalPort()+ "\n");
-                    ExecutorService pool = Executors.newCachedThreadPool();
-                    while (true) {
-                        Socket client = serverSocket.accept();
-                        pool.execute(() -> manejarCliente(client));
-                    }
-
-                } catch (IOException ex) {
-                    ex.printStackTrace();
-                    mensajesTxt.append("Error en el servidor: " + ex.getMessage() + "\n");
+        new Thread(() -> {
+            try {
+                InetAddress addr = InetAddress.getLocalHost();
+                serverSocket = new ServerSocket(PORT);
+                mensajesTxt.append("Servidor TCP en ejecución: " + addr + " ,Puerto " + serverSocket.getLocalPort() + "\n");
+                ExecutorService pool = Executors.newCachedThreadPool();
+                while (true) {
+                    Socket client = serverSocket.accept();
+                    pool.execute(() -> manejarCliente(client));
                 }
+            } catch (IOException ex) {
+                ex.printStackTrace();
+                mensajesTxt.append("Error en el servidor: " + ex.getMessage() + "\n");
             }
         }).start();
     }
 
     private void manejarCliente(Socket clientSocket) {
+        String username = null;
         try (
-                BufferedReader in = new BufferedReader(
-                        new InputStreamReader(clientSocket.getInputStream()));
-                PrintWriter out = new PrintWriter(
-                        clientSocket.getOutputStream(), true)
+                BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+                PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)
         ) {
-            clientes.add(out);
+
+            String first = in.readLine();
+            if (first == null || !first.startsWith("USER:")) {
+                out.println("ERROR:BAD_HANDSHAKE:Se esperaba USER:<nombre>");
+                clientSocket.close();
+                return;
+            }
+
+            username = first.substring("USER:".length()).trim();
+            if (username.isEmpty() || username.contains(":") || username.contains(",") || username.length() > 32) {
+                out.println("ERROR:BAD_USERNAME:Nombre inválido");
+                clientSocket.close();
+                return;
+            }
+
+            PrintWriter prev = clientes.putIfAbsent(username, out);
+            if (prev != null) {
+                out.println("ERROR:USER_TAKEN:Ya existe ese usuario");
+                clientSocket.close();
+                return;
+            }
+
+            out.println("OK:USER_REGISTERED");
+            broadcastUsers();
+            logSwing("Se conectó: " + username);
+
             String linea;
-
             while ((linea = in.readLine()) != null) {
-                String finalLinea = linea;
-                if (finalLinea.startsWith("FILE:")) {
-
+                final String msg = linea;
+                // Soportar envío de archivo existente
+                if (msg.startsWith("FILE:")) {
                     out.println("Mensaje recibido en el server");
-
-                    String[] partes = linea.split(":");
+                    // FILE:nombre:tamaño
+                    String[] partes = msg.split(":", 3);
+                    if (partes.length < 3) {
+                        out.println("ERROR:BAD_FILE_HEADER");
+                        continue;
+                    }
                     String nombre = partes[1];
                     long tamaño = Long.parseLong(partes[2]);
 
-                    FileOutputStream fos = new FileOutputStream("recibido_" + nombre);
-                    InputStream is = clientSocket.getInputStream();
-
-                    byte[] buffer = new byte[4096];
-                    long restantes = tamaño;
-                    int bytes;
-
-                    while (restantes > 0 &&
-                            (bytes = is.read(buffer, 0,
-                                    (int)Math.min(buffer.length, restantes))) != -1) {
-
-                        fos.write(buffer, 0, bytes);
-                        restantes -= bytes;
+                    try (FileOutputStream fos = new FileOutputStream("recibido_" + nombre)) {
+                        InputStream is = clientSocket.getInputStream();
+                        byte[] buffer = new byte[4096];
+                        long restantes = tamaño;
+                        int bytes;
+                        while (restantes > 0 &&
+                                (bytes = is.read(buffer, 0, (int) Math.min(buffer.length, restantes))) != -1) {
+                            fos.write(buffer, 0, bytes);
+                            restantes -= bytes;
+                        }
                     }
-
-                    fos.close();
-
-                    System.out.println("Archivo recibido: " + nombre);
-
+                    logSwing("Archivo recibido: " + nombre);
                     continue;
                 }
 
+                if (msg.startsWith("PRIV:")) {
+                    String[] partes = msg.split(":", 3);
+                    if (partes.length < 3) {
+                        out.println("ERROR:BAD_PRIV_FORMAT:Use PRIV:<dest>:<mensaje>");
+                        continue;
+                    }
+                    String dest = partes[1].trim();
+                    String cuerpo = partes[2];
 
-
-                SwingUtilities.invokeLater(() ->
-                        mensajesTxt.append("Cliente: " + finalLinea + "\n")
-
-                );
-                for (PrintWriter cliente : clientes) {
-                    cliente.println(finalLinea);
+                    PrintWriter outDest = clientes.get(dest);
+                    if (outDest == null) {
+                        out.println("ERROR:USER_NOT_FOUND:" + dest);
+                    } else {
+                        outDest.println("FROM:" + username + ":" + cuerpo);
+                        out.println("FROM:" + username + "->" + dest + ":" + cuerpo);
+                    }
+                    continue;
                 }
 
-                out.println("Mensaje recibido en el server");
+                if (msg.startsWith("MSG:")) {
+                    String cuerpo = msg.substring("MSG:".length());
+                    broadcastAll("ALL:" + username + ":" + cuerpo);
+                    continue;
+                }
+                broadcastAll("ALL:" + username + ":" + msg);
             }
-
         } catch (IOException e) {
-            SwingUtilities.invokeLater(() ->
-                    mensajesTxt.append("Cliente desconectado\n")
-            );
+        } finally {
+            if (username != null) {
+                clientes.remove(username);
+                broadcastUsers();
+                logSwing("Cliente desconectado: " + username);
+            } else {
+                logSwing("Cliente desconectado (sin usuario)");
+            }
         }
     }
 
+    private void broadcastAll(String payload) {
+        // Enviar a todos los conectados
+        for (PrintWriter pw : clientes.values()) {
+            pw.println(payload);
+        }
+        // Log en UI (solo texto legible)
+        if (payload.startsWith("ALL:")) {
+            String[] parts = payload.split(":", 3);
+            if (parts.length == 3) {
+                logSwing(parts[0] + " " + parts[1] + ": " + parts[2]);
+            } else {
+                logSwing(payload);
+            }
+        } else {
+            logSwing(payload);
+        }
+    }
 
-    // Variables declaration - do not modify
-    private javax.swing.JButton bIniciar;
-    private javax.swing.JLabel jLabel1;
-    private javax.swing.JTextArea mensajesTxt;
-    private javax.swing.JScrollPane jScrollPane1;
+    private void broadcastUsers() {
+        Set<String> users = clientes.keySet();
+        String lista = String.join(",", users);
+        String frame = "USERS:" + lista;
+        for (PrintWriter pw : clientes.values()) {
+            pw.println(frame);
+        }
+    }
+
+    private void logSwing(String text) {
+        SwingUtilities.invokeLater(() -> mensajesTxt.append(text + "\n"));
+    }
 }
