@@ -18,7 +18,7 @@ public class PrincipalCli extends javax.swing.JFrame {
     private PrintWriter out;
     private BufferedReader in;
 
-    // Nuevos componentes
+    //Nuevos componentes
     private javax.swing.JButton bConectar;
     private javax.swing.JButton btEnviar;
     private javax.swing.JLabel jLabel1;
