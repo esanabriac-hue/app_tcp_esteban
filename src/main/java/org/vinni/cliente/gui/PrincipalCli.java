@@ -138,7 +138,7 @@ public class PrincipalCli extends javax.swing.JFrame {
         JOptionPane.showMessageDialog(this, "Conectando con servidor");
         try {
             if (socket == null || socket.isClosed()) {
-                socket = new Socket("localhost", PORT);
+                socket = new Socket("190.27.17.72", PORT);
                 out = new PrintWriter(socket.getOutputStream(), true);
                 in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             }
