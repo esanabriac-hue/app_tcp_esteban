@@ -18,6 +18,7 @@ import java.util.concurrent.Executors;
 public class PrincipalSrv extends javax.swing.JFrame {
     private final int PORT = 12345;
     private ServerSocket serverSocket;
+    private boolean servidorActivo = false;
 
     private static final Map<String, PrintWriter> clientes = new ConcurrentHashMap<>();
 
@@ -25,6 +26,7 @@ public class PrincipalSrv extends javax.swing.JFrame {
     private javax.swing.JLabel jLabel1;
     private javax.swing.JTextArea mensajesTxt;
     private javax.swing.JScrollPane jScrollPane1;
+    private javax.swing.JButton bReiniciar;
 
     public PrincipalSrv() {
         initComponents();
@@ -47,6 +49,15 @@ public class PrincipalSrv extends javax.swing.JFrame {
         bIniciar.addActionListener(evt -> bIniciarActionPerformed(evt));
         getContentPane().add(bIniciar);
         bIniciar.setBounds(100, 90, 250, 40);
+
+        bReiniciar = new javax.swing.JButton();
+        bReiniciar.setText("REINICIAR SERVIDOR");
+        bReiniciar.setFont(new java.awt.Font("Segoe UI", 0, 18));
+        bReiniciar.setBounds(100, 140, 250, 40);
+
+        bReiniciar.addActionListener(evt -> reiniciarServidor());
+
+        getContentPane().add(bReiniciar);
 
         jLabel1.setFont(new java.awt.Font("Tahoma", 1, 14)); // NOI18N
         jLabel1.setForeground(new java.awt.Color(204, 0, 0));
@@ -73,20 +84,27 @@ public class PrincipalSrv extends javax.swing.JFrame {
     }
 
     private void iniciarServidor() {
-        JOptionPane.showMessageDialog(this, "Iniciando servidor");
         new Thread(() -> {
             try {
                 InetAddress addr = InetAddress.getLocalHost();
                 serverSocket = new ServerSocket(PORT);
-                mensajesTxt.append("Servidor TCP en ejecución: " + addr + " ,Puerto " + serverSocket.getLocalPort() + "\n");
+                servidorActivo = true;
+
+                mensajesTxt.append("Servidor iniciado en puerto " + PORT + "\n");
+
                 ExecutorService pool = Executors.newCachedThreadPool();
-                while (true) {
-                    Socket client = serverSocket.accept();
-                    pool.execute(() -> manejarCliente(client));
+
+                while (servidorActivo) {
+                    try {
+                        Socket client = serverSocket.accept();
+                        pool.execute(() -> manejarCliente(client));
+                    } catch (IOException e) {
+                        if (!servidorActivo) break;
+                    }
                 }
-            } catch (IOException ex) {
-                ex.printStackTrace();
-                mensajesTxt.append("Error en el servidor: " + ex.getMessage() + "\n");
+
+            } catch (IOException e) {
+                mensajesTxt.append("Error: " + e.getMessage() + "\n");
             }
         }).start();
     }
@@ -209,6 +227,34 @@ public class PrincipalSrv extends javax.swing.JFrame {
         }
     }
 
+    private void detenerServidor() {
+        try {
+            servidorActivo = false;
+
+            if (serverSocket != null && !serverSocket.isClosed()) {
+                serverSocket.close();
+            }
+
+            mensajesTxt.append("Servidor detenido ❌\n");
+
+        } catch (IOException e) {
+            mensajesTxt.append("Error al detener: " + e.getMessage() + "\n");
+        }
+    }
+
+    private void reiniciarServidor() {
+        mensajesTxt.append("Reiniciando servidor...\n");
+
+        detenerServidor();
+
+        try {
+            Thread.sleep(2000); // pequeña pausa
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        iniciarServidor();
+    }
     private void broadcastUsers() {
         Set<String> users = clientes.keySet();
         String lista = String.join(",", users);

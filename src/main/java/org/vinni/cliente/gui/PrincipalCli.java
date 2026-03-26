@@ -13,10 +13,14 @@ import java.util.Set;
  */
 public class PrincipalCli extends javax.swing.JFrame {
 
-    private final int PORT = 12345;
+    private final int[] PORTS = {12345, 12346, 12347}; // principal + backup
+    private int currentServerIndex = 0;
     private Socket socket;
     private PrintWriter out;
     private BufferedReader in;
+    private final int MAX_REINTENTOS = 5;
+    private final int TIEMPO_ESPERA = 3000;
+    private final int TIMEOUT = 2000;
 
     //Nuevos componentes
     private javax.swing.JButton bConectar;
@@ -135,68 +139,92 @@ public class PrincipalCli extends javax.swing.JFrame {
     // ------------------ Lógica de red ------------------
 
     private void conectar() {
-        JOptionPane.showMessageDialog(this, "Conectando con servidor");
-        try {
-            if (socket == null || socket.isClosed()) {
-                socket = new Socket("localhost", PORT);
-                out = new PrintWriter(socket.getOutputStream(), true);
-                in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            }
+        new Thread(() -> {
+            int intentos = 0;
+            boolean conectado = false;
 
-            // Pedir nombre de usuario
-            while (myName == null || myName.trim().isEmpty()) {
-                myName = JOptionPane.showInputDialog(this, "Tu nombre de usuario:");
-                if (myName == null) { // Cancelado
-                    return;
-                }
-                myName = myName.trim();
-            }
+            while (!conectado && intentos < MAX_REINTENTOS * PORTS.length) {
 
-            // Enviar USER y validar respuesta
-            out.println("USER:" + myName);
-            String ack = in.readLine();
-            if (ack == null || !ack.startsWith("OK:")) {
-                String err = (ack == null ? "Sin respuesta del servidor" : ack);
-                JOptionPane.showMessageDialog(this, "No se pudo registrar: " + err, "Error", JOptionPane.ERROR_MESSAGE);
-                // Reset para permitir reintentar
-                myName = null;
-                return;
-            }
+                int puertoActual = PORTS[currentServerIndex];
 
-            // Hilo lector
-            new Thread(() -> {
                 try {
-                    String fromServer;
-                    while ((fromServer = in.readLine()) != null) {
-                        final String linea = fromServer;
-                        if (linea.startsWith("USERS:")) {
-                            actualizarUsuarios(linea.substring("USERS:".length()));
-                        } else if (linea.startsWith("ALL:")) {
-                            // ALL:origen:mensaje
-                            String[] parts = linea.split(":", 3);
-                            String origen = parts.length > 1 ? parts[1] : "¿?";
-                            String cuerpo = parts.length > 2 ? parts[2] : "";
-                            appendMsg(origen + ": " + cuerpo);
-                        } else if (linea.startsWith("FROM:")) {
-                            // FROM:origen:mensaje (privado)
-                            String[] parts = linea.split(":", 3);
-                            String origen = parts.length > 1 ? parts[1] : "¿?";
-                            String cuerpo = parts.length > 2 ? parts[2] : "";
-                            appendMsg("[Privado] " + origen + ": " + cuerpo);
-                        } else if (linea.startsWith("ERROR:")) {
-                            appendMsg("[Servidor] " + linea);
-                        } else {
-                            appendMsg("Servidor: " + linea);
-                        }
-                    }
-                } catch (IOException ex) {
-                    appendMsg("Conexión cerrada.");
-                }
-            }).start();
+                    appendMsg("Intentando conectar a puerto " + puertoActual + "...");
 
-        } catch (IOException e) {
-            JOptionPane.showMessageDialog(this, "Error conectando: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                    socket = new Socket();
+                    socket.connect(
+                            new java.net.InetSocketAddress("localhost", puertoActual),
+                            TIMEOUT
+                    );
+
+                    out = new PrintWriter(socket.getOutputStream(), true);
+                    in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+
+                    conectado = true;
+                    appendMsg("Conectado al servidor en puerto " + puertoActual + " ✅");
+
+                    registrarUsuario();
+                    escucharServidor();
+
+                } catch (IOException e) {
+                    appendMsg("Fallo en puerto " + puertoActual);
+
+                    currentServerIndex = (currentServerIndex + 1) % PORTS.length;
+
+                    intentos++;
+
+                    try {
+                        Thread.sleep(TIEMPO_ESPERA);
+                    } catch (InterruptedException ex) {
+                        ex.printStackTrace();
+                    }
+                }
+            }
+
+            if (!conectado) {
+                appendMsg("No se pudo conectar a ningún servidor ❌");
+            }
+        }).start();
+    }
+
+    private void registrarUsuario() throws IOException {
+        while (myName == null || myName.trim().isEmpty()) {
+            myName = JOptionPane.showInputDialog(this, "Tu nombre:");
+            if (myName == null) return;
         }
+
+        out.println("USER:" + myName);
+        String ack = in.readLine();
+
+        if (ack == null || !ack.startsWith("OK")) {
+            throw new IOException("Error registro: " + ack);
+        }
+    }
+
+    private void escucharServidor() {
+        new Thread(() -> {
+            try {
+                String msg;
+                while ((msg = in.readLine()) != null) {
+                    appendMsg(msg);
+                }
+            } catch (IOException e) {
+                appendMsg("Conexión perdida ⚠️");
+                reconectar();
+            }
+        }).start();
+    }
+
+    private void reconectar() {
+        appendMsg("Intentando reconectar...");
+
+        try {
+            if (socket != null) socket.close();
+        } catch (IOException e) {}
+
+        // 🔥 cambiar al siguiente servidor
+        currentServerIndex = (currentServerIndex + 1) % PORTS.length;
+
+        conectar();
     }
 
     private void enviarMensaje() {
