@@ -9,11 +9,12 @@ import java.util.Set;
 
 /**
  * author: Vinni 2024
- * Modificado: Soporta USER/MSG/PRIV y selector de destinatario
+ * Modificado: Soporta Load Balancer, USER/MSG/PRIV y filtrado de Heartbeats
  */
 public class PrincipalCli extends javax.swing.JFrame {
 
-    private final int[] PORTS = {12345, 12346, 12347}; // principal + backup
+    private final int LB_PORT = 12340; // Puerto del Gateway/Balanceador
+    private final int[] PORTS = {12345, 12346, 12347}; // Fallback si el balanceador no está
     private int currentServerIndex = 0;
     private Socket socket;
     private PrintWriter out;
@@ -22,7 +23,6 @@ public class PrincipalCli extends javax.swing.JFrame {
     private final int TIEMPO_ESPERA = 3000;
     private final int TIMEOUT = 2000;
 
-    //Nuevos componentes
     private javax.swing.JButton bConectar;
     private javax.swing.JButton btEnviar;
     private javax.swing.JLabel jLabel1;
@@ -35,7 +35,6 @@ public class PrincipalCli extends javax.swing.JFrame {
     private JComboBox<String> destinatarioCmb;
     private JLabel destinatarioLbl;
 
-    // Estado
     private String myName = null;
 
     public PrincipalCli() {
@@ -61,13 +60,13 @@ public class PrincipalCli extends javax.swing.JFrame {
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
         getContentPane().setLayout(null);
 
-        bConectar.setFont(new java.awt.Font("Segoe UI", 0, 14)); // NOI18N
+        bConectar.setFont(new java.awt.Font("Segoe UI", 0, 14));
         bConectar.setText("CONECTAR CON SERVIDOR");
         bConectar.addActionListener(evt -> bConectarActionPerformed(evt));
         getContentPane().add(bConectar);
         bConectar.setBounds(260, 40, 210, 40);
 
-        jLabel1.setFont(new java.awt.Font("Tahoma", 1, 14)); // NOI18N
+        jLabel1.setFont(new java.awt.Font("Tahoma", 1, 14));
         jLabel1.setForeground(new java.awt.Color(204, 0, 0));
         jLabel1.setText("CLIENTE TCP : DFRACK");
         getContentPane().add(jLabel1);
@@ -80,16 +79,16 @@ public class PrincipalCli extends javax.swing.JFrame {
         getContentPane().add(jScrollPane1);
         jScrollPane1.setBounds(30, 210, 410, 140);
 
-        mensajeTxt.setFont(new java.awt.Font("Verdana", 0, 14)); // NOI18N
+        mensajeTxt.setFont(new java.awt.Font("Verdana", 0, 14));
         getContentPane().add(mensajeTxt);
         mensajeTxt.setBounds(40, 120, 350, 30);
 
-        jLabel2.setFont(new java.awt.Font("Verdana", 0, 14)); // NOI18N
+        jLabel2.setFont(new java.awt.Font("Verdana", 0, 14));
         jLabel2.setText("Mensaje:");
         getContentPane().add(jLabel2);
         jLabel2.setBounds(20, 90, 120, 30);
 
-        btEnviar.setFont(new java.awt.Font("Verdana", 0, 14)); // NOI18N
+        btEnviar.setFont(new java.awt.Font("Verdana", 0, 14));
         btEnviar.setText("Enviar");
         btEnviar.addActionListener(evt -> btEnviarActionPerformed(evt));
         getContentPane().add(btEnviar);
@@ -101,7 +100,6 @@ public class PrincipalCli extends javax.swing.JFrame {
         getContentPane().add(btEnviarArchivo);
         btEnviarArchivo.setBounds(40, 160, 150, 27);
 
-        // Selector de destinatario
         destinatarioLbl.setFont(new java.awt.Font("Verdana", 0, 14));
         getContentPane().add(destinatarioLbl);
         destinatarioLbl.setBounds(40, 60, 80, 20);
@@ -138,6 +136,22 @@ public class PrincipalCli extends javax.swing.JFrame {
 
     // ------------------ Lógica de red ------------------
 
+    private int solicitarPuertoABalanceador() {
+        try (Socket lbSocket = new Socket()) {
+            appendMsg("Contactando Balanceador de carga...");
+            lbSocket.connect(new java.net.InetSocketAddress("localhost", LB_PORT), TIMEOUT);
+            BufferedReader lbIn = new BufferedReader(new InputStreamReader(lbSocket.getInputStream()));
+            String respuesta = lbIn.readLine();
+
+            if (respuesta != null && respuesta.startsWith("REDIRECT:")) {
+                return Integer.parseInt(respuesta.substring("REDIRECT:".length()));
+            }
+        } catch (Exception e) {
+            appendMsg("Balanceador inactivo. Usando fallback local...");
+        }
+        return -1; // Falló el balanceador
+    }
+
     private void conectar() {
         new Thread(() -> {
             int intentos = 0;
@@ -145,10 +159,16 @@ public class PrincipalCli extends javax.swing.JFrame {
 
             while (!conectado && intentos < MAX_REINTENTOS * PORTS.length) {
 
-                int puertoActual = PORTS[currentServerIndex];
+                // 🔥 MEJORA: Primero intentamos con el Balanceador
+                int puertoActual = solicitarPuertoABalanceador();
+
+                // Si el balanceador falla, usamos el comportamiento original de puertos manuales
+                if (puertoActual == -1) {
+                    puertoActual = PORTS[currentServerIndex];
+                }
 
                 try {
-                    appendMsg("Intentando conectar a puerto " + puertoActual + "...");
+                    appendMsg("Intentando conectar al nodo en puerto " + puertoActual + "...");
 
                     socket = new Socket();
                     socket.connect(
@@ -167,9 +187,7 @@ public class PrincipalCli extends javax.swing.JFrame {
 
                 } catch (IOException e) {
                     appendMsg("Fallo en puerto " + puertoActual);
-
                     currentServerIndex = (currentServerIndex + 1) % PORTS.length;
-
                     intentos++;
 
                     try {
@@ -205,7 +223,14 @@ public class PrincipalCli extends javax.swing.JFrame {
             try {
                 String msg;
                 while ((msg = in.readLine()) != null) {
-                    appendMsg(msg);
+                    // 🔥 MEJORA: Ignorar los mensajes PING para no ensuciar la interfaz
+                    if (msg.equals("PING:")) continue;
+
+                    if (msg.startsWith("USERS:")) {
+                        actualizarUsuarios(msg.substring("USERS:".length()));
+                    } else {
+                        appendMsg(msg);
+                    }
                 }
             } catch (IOException e) {
                 appendMsg("Conexión perdida ⚠️");
@@ -216,14 +241,11 @@ public class PrincipalCli extends javax.swing.JFrame {
 
     private void reconectar() {
         appendMsg("Intentando reconectar...");
-
         try {
             if (socket != null) socket.close();
         } catch (IOException e) {}
 
-        // 🔥 cambiar al siguiente servidor
         currentServerIndex = (currentServerIndex + 1) % PORTS.length;
-
         conectar();
     }
 
@@ -274,7 +296,6 @@ public class PrincipalCli extends javax.swing.JFrame {
 
     private void actualizarUsuarios(String listaCsv) {
         SwingUtilities.invokeLater(() -> {
-            // Mantener "Todos" fijo + usuarios únicos
             Set<String> nuevos = new LinkedHashSet<>();
             nuevos.add("Todos");
             if (listaCsv != null && !listaCsv.isEmpty()) {
@@ -287,7 +308,6 @@ public class PrincipalCli extends javax.swing.JFrame {
                 destinatarioCmb.addItem(u);
             }
 
-            // Volver a seleccionar si es posible
             if (seleccionado != null && nuevos.contains(seleccionado)) {
                 destinatarioCmb.setSelectedItem(seleccionado);
             } else {

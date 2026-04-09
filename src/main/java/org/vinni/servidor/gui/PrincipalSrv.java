@@ -11,10 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/**
- * Author: Vinni
- * Modificado: Mensajería privada entre clientes (USER, MSG y PRIV)
- */
+
 public class PrincipalSrv extends javax.swing.JFrame {
     private final int PORT = 12345;
     private ServerSocket serverSocket;
@@ -44,7 +41,7 @@ public class PrincipalSrv extends javax.swing.JFrame {
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
         getContentPane().setLayout(null);
 
-        bIniciar.setFont(new java.awt.Font("Segoe UI", 0, 18)); // NOI18N
+        bIniciar.setFont(new java.awt.Font("Segoe UI", 0, 18));
         bIniciar.setText("INICIAR SERVIDOR");
         bIniciar.addActionListener(evt -> bIniciarActionPerformed(evt));
         getContentPane().add(bIniciar);
@@ -54,12 +51,10 @@ public class PrincipalSrv extends javax.swing.JFrame {
         bReiniciar.setText("REINICIAR SERVIDOR");
         bReiniciar.setFont(new java.awt.Font("Segoe UI", 0, 18));
         bReiniciar.setBounds(100, 140, 250, 40);
-
         bReiniciar.addActionListener(evt -> reiniciarServidor());
-
         getContentPane().add(bReiniciar);
 
-        jLabel1.setFont(new java.awt.Font("Tahoma", 1, 14)); // NOI18N
+        jLabel1.setFont(new java.awt.Font("Tahoma", 1, 14));
         jLabel1.setForeground(new java.awt.Color(204, 0, 0));
         jLabel1.setText("SERVIDOR TCP : HOEL");
         getContentPane().add(jLabel1);
@@ -94,6 +89,30 @@ public class PrincipalSrv extends javax.swing.JFrame {
 
                 ExecutorService pool = Executors.newCachedThreadPool();
 
+                // 🔥 MEJORA: Hilo Demonio para Heartbeats (Mantiene vivos los sockets y detecta caídas)
+                Thread heartbeatThread = new Thread(() -> {
+                    while (servidorActivo) {
+                        try {
+                            Thread.sleep(10000); // Latido cada 10 segundos
+                            for (Map.Entry<String, PrintWriter> entry : clientes.entrySet()) {
+                                PrintWriter pw = entry.getValue();
+                                if (pw.checkError()) { // Si da true, la conexión física se rompió
+                                    logSwing("Latido falló para: " + entry.getKey() + ". Desconectando.");
+                                    clientes.remove(entry.getKey());
+                                    broadcastUsers();
+                                } else {
+                                    pw.println("PING:"); // Mantiene la red viva
+                                }
+                            }
+                        } catch (InterruptedException e) {
+                            break;
+                        }
+                    }
+                });
+                heartbeatThread.setDaemon(true);
+                heartbeatThread.start();
+
+                // Loop principal de aceptación de clientes
                 while (servidorActivo) {
                     try {
                         Socket client = serverSocket.accept();
@@ -144,10 +163,10 @@ public class PrincipalSrv extends javax.swing.JFrame {
             String linea;
             while ((linea = in.readLine()) != null) {
                 final String msg = linea;
-                // Soportar envío de archivo existente
+
+                // Manejo de envío de archivos
                 if (msg.startsWith("FILE:")) {
                     out.println("Mensaje recibido en el server");
-                    // FILE:nombre:tamaño
                     String[] partes = msg.split(":", 3);
                     if (partes.length < 3) {
                         out.println("ERROR:BAD_FILE_HEADER");
@@ -171,6 +190,7 @@ public class PrincipalSrv extends javax.swing.JFrame {
                     continue;
                 }
 
+                // Manejo de mensajes privados
                 if (msg.startsWith("PRIV:")) {
                     String[] partes = msg.split(":", 3);
                     if (partes.length < 3) {
@@ -190,6 +210,7 @@ public class PrincipalSrv extends javax.swing.JFrame {
                     continue;
                 }
 
+                // Manejo de mensajes globales
                 if (msg.startsWith("MSG:")) {
                     String cuerpo = msg.substring("MSG:".length());
                     broadcastAll("ALL:" + username + ":" + cuerpo);
@@ -198,6 +219,7 @@ public class PrincipalSrv extends javax.swing.JFrame {
                 broadcastAll("ALL:" + username + ":" + msg);
             }
         } catch (IOException e) {
+            // Error esperado si el cliente cierra abruptamente
         } finally {
             if (username != null) {
                 clientes.remove(username);
@@ -210,11 +232,9 @@ public class PrincipalSrv extends javax.swing.JFrame {
     }
 
     private void broadcastAll(String payload) {
-        // Enviar a todos los conectados
         for (PrintWriter pw : clientes.values()) {
             pw.println(payload);
         }
-        // Log en UI (solo texto legible)
         if (payload.startsWith("ALL:")) {
             String[] parts = payload.split(":", 3);
             if (parts.length == 3) {
@@ -230,13 +250,10 @@ public class PrincipalSrv extends javax.swing.JFrame {
     private void detenerServidor() {
         try {
             servidorActivo = false;
-
             if (serverSocket != null && !serverSocket.isClosed()) {
                 serverSocket.close();
             }
-
             mensajesTxt.append("Servidor detenido ❌\n");
-
         } catch (IOException e) {
             mensajesTxt.append("Error al detener: " + e.getMessage() + "\n");
         }
@@ -244,17 +261,15 @@ public class PrincipalSrv extends javax.swing.JFrame {
 
     private void reiniciarServidor() {
         mensajesTxt.append("Reiniciando servidor...\n");
-
         detenerServidor();
-
         try {
-            Thread.sleep(2000); // pequeña pausa
+            Thread.sleep(2000);
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
-
         iniciarServidor();
     }
+
     private void broadcastUsers() {
         Set<String> users = clientes.keySet();
         String lista = String.join(",", users);
